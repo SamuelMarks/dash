@@ -56,7 +56,8 @@ static inline void sigclearmask(void)
 }
 
 #ifndef HAVE_MEMFD_CREATE
-static inline int memfd_create(const char *name, unsigned int flags)
+#define memfd_create dash_memfd_create
+static inline int dash_memfd_create(const char *name, unsigned int flags)
 {
 	return -1;
 }
@@ -120,7 +121,8 @@ int isblank(int c);
 #endif
 
 #ifndef HAVE_TEE
-static inline ssize_t tee(int fd_in, int fd_out, size_t len, unsigned int flags)
+#define tee dash_tee
+static inline ssize_t dash_tee(int fd_in, int fd_out, size_t len, unsigned int flags)
 {
 	return -1;
 }
@@ -191,3 +193,8 @@ static inline void globfree64(glob64_t *pglob)
 #define uninitialized_var(x) x = x
 
 unsigned conv_escape(char *str, char *out, bool mbchar);
+
+#ifdef __EMSCRIPTEN__
+static inline int em_sigsuspend(const sigset_t *mask) { return -1; }
+#endif
+#define sigsuspend em_sigsuspend

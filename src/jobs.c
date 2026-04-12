@@ -201,6 +201,7 @@ static void xxtcsetpgrp(pid_t pgrp)
 void
 setjobctl(int on)
 {
+    return;
 	int pgrp = -1;
 	int fd;
 
@@ -988,12 +989,68 @@ forkshell(struct job *jp, union node *n, int mode)
 	return pid;
 }
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 struct job *vforkexec(union node *n, char **argv, const char *path, int idx)
 {
-	struct job *jp;
-	int pid;
+        struct job *jp;
+        int pid;
 
-	jp = makejob(1);
+        jp = makejob(1);
+
+#ifdef __EMSCRIPTEN__
+        int exit_status = EM_ASM_INT({
+            var ptr = $0;
+            var args = [];
+            while (HEAPU32[ptr>>2]) {
+                args.push(UTF8ToString(HEAPU32[ptr>>2]));
+                ptr += 4;
+            }
+            
+            if (typeof processExternalCommand === 'function') {
+                return processExternalCommand(args);
+            }
+            
+            if (args[0] === 'uname') {
+                Module.print('Emscripten');
+                return 0;
+            } else if (args[0] === 'ls') {
+                try {
+                    var items = FS.readdir(FS.cwd());
+                    items = items.filter(function(i) { return i !== '.' && i !== '..'; });
+                    Module.print(items.join('  '));
+                    return 0;
+                } catch(e) {
+                    Module.printErr('ls: ' + e.message);
+                    return 1;
+                }
+            } else if (args[0] === 'cat') {
+                if (args.length > 1) {
+                    try {
+                        var content = FS.readFile(args[1], { encoding: 'utf8' });
+                        Module.print(content.trimEnd());
+                        return 0;
+                    } catch(e) {
+                        Module.printErr('cat: ' + args[1] + ': No such file or directory');
+                        return 1;
+                    }
+                }
+                return 0;
+            } else if (args[0] === 'grep') {
+                Module.printErr('grep: not implemented');
+                return 1;
+            }
+            
+            Module.printErr(args[0] + ': command not found');
+            return 127;
+        }, argv);
+
+        jp->ps[0].status = exit_status << 8;
+        jp->state = 2; // JOBDONE
+        return jp;
+#endif
 
 	if (!mypid)
 		mypid = getpid();

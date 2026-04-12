@@ -40,3 +40,22 @@ Makefile
 .Spotlight*
 .Trash*
 *[Tt]humbs.db
+emsdk/
+
+# WASM build artifacts
+*.wasm
+*.wasm.map
+
+# Patch scripts
+patch_*.js
+
+# Web project artifacts
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/public/dash.js
+web/public/dash.min.js
+web/public/dash.wasm
+web/public/dash.wasm.map

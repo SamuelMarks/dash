@@ -517,3 +517,51 @@ ulimitcmd(int argc, char **argv)
 	return 0;
 }
 #endif
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+int lscmd(int argc, char **argv) {
+#ifdef __EMSCRIPTEN__
+        char *path = argc > 1 ? argv[1] : ".";
+        EM_ASM_INT({
+            try {
+                var path = UTF8ToString($0);
+                if (path === ".") path = FS.cwd();
+                var items = FS.readdir(path);
+                items = items.filter(function(i){return i!=='.'&&i!=='..';});
+                Module.print(items.join('  '));
+            } catch(e) { Module.printErr(e.toString()); }
+        }, path);
+#endif
+        return 0;
+}
+
+int catcmd(int argc, char **argv) {
+#ifdef __EMSCRIPTEN__
+        if (argc > 1) {
+            EM_ASM_INT({
+                try {
+                    var content = FS.readFile(UTF8ToString($0), {encoding:'utf8'});
+                    Module.print(content.trimEnd());
+                } catch(e) { Module.printErr(e.toString()); }
+            }, argv[1]);
+        }
+#endif
+        return 0;
+}
+
+int grepcmd(int argc, char **argv) {
+#ifdef __EMSCRIPTEN__
+        EM_ASM_INT({ Module.printErr('grep: not implemented'); });
+#endif
+        return 1;
+}
+
+int unamecmd(int argc, char **argv) {
+#ifdef __EMSCRIPTEN__
+        EM_ASM_INT({ Module.print('Emscripten'); });
+#endif
+        return 0;
+}

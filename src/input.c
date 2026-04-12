@@ -325,13 +325,28 @@ retry:
 		nr = stdin_tee(buf, nr);
 		fd = stdin_state.pip[0];
 		if (nr <= 0) {
-			fd = 0;
-			nr = 1;
-		}
+                        fd = 0;
+#ifdef __EMSCRIPTEN__
+                        nr = BUFSIZ;
+#else
+                        nr = 1;
+#endif
+                }
 	}
 
-	if (nr >= 0)
-		nr = read(fd, buf, nr);
+	#ifdef __EMSCRIPTEN__
+        extern int dash_async_read(int fd, char* bufPtr, int length);
+        if (nr >= 0) {
+                if (fd == 0) {
+                        nr = dash_async_read(fd, buf, nr);
+                } else {
+                        nr = read(fd, buf, nr);
+                }
+        }
+#else
+        if (nr >= 0)
+                nr = read(fd, buf, nr);
+#endif
 
 	if (nr < 0) {
 		if (errno == EINTR && !(basepf.prev && pending_sig))

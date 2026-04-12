@@ -792,15 +792,16 @@ static void nlnoprompt(void)
  *  have parseword (readtoken1?) handle both words and redirection.]
  */
 
-#define RETURN(token)	return lasttoken = token
+#define RETURN(token) {  return lasttoken = token; }
 
 STATIC int
 xxreadtoken(void)
 {
-	int c;
+        int c;
 
-	if (tokpushback) {
-		tokpushback = 0;
+        
+
+        if (tokpushback) {		tokpushback = 0;
 		return lasttoken;
 	}
 	if (needprompt) {
@@ -1219,7 +1220,7 @@ endword:
 	backquotelist = bqlist;
 	grabstackblock(len);
 	wordtext = out;
-	return lasttoken = TWORD;
+	 return lasttoken = TWORD;
 /* end of readtoken routine */
 
 

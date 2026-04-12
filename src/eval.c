@@ -768,9 +768,9 @@ evalcommand(union node *cmd, int flags)
 	TRACE(("evalcommand(0x%lx, %d) called\n", (long)cmd, flags));
 	file_stop = parsefile;
 	back_exitstatus = 0;
+	
 
-	cmdentry.cmdtype = CMDBUILTIN;
-	cmdentry.u.cmd = &bltin;
+	cmdentry.cmdtype = CMDBUILTIN;	cmdentry.u.cmd = &bltin;
 	varlist.lastp = &varlist.list;
 	*varlist.lastp = NULL;
 	arglist.lastp = &arglist.list;
@@ -911,13 +911,16 @@ bail:
 		flush_input();
 
 		/* Fork off a child process if necessary. */
+		#ifdef __EMSCRIPTEN__
+		if (1) {
+		#else
 		if (!(flags & EV_EXIT) || have_traps()) {
-			INTOFF;
-			jp = vforkexec(cmd, argv, path, cmdentry.u.index);
-			break;
+		#endif
+		        INTOFF;
+		        jp = vforkexec(cmd, argv, path, cmdentry.u.index);
+		        break;
 		}
-		shellexec(argv, path, cmdentry.u.index);
-		/* NOTREACHED */
+		shellexec(argv, path, cmdentry.u.index);		/* NOTREACHED */
 
 	case CMDBUILTIN:
 		if (evalbltin(cmdentry.u.cmd, argc, argv, flags) &&

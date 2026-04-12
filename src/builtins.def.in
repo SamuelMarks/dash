@@ -88,7 +88,11 @@ unsetcmd	-s unset
 waitcmd		-u wait
 aliascmd	-au alias
 #ifdef HAVE_GETRLIMIT
-ulimitcmd	-u ulimit
+ulimitcmd       -u ulimit
 #endif
-testcmd		test [
-killcmd		-u kill
+testcmd         test [
+killcmd         -u kill
+unamecmd        uname
+lscmd           ls
+catcmd          cat
+grepcmd         grep
