@@ -59,3 +59,15 @@ web/public/dash.js
 web/public/dash.min.js
 web/public/dash.wasm
 web/public/dash.wasm.map
+
+# Temporary workspace files
+a.sh
+brew_programs_list.txt
+*.bak2
+implement_*.js
+parse_human.js
+*.diff
+post.md
+/test-results/
+test_dirname.js
+uninstall.sh

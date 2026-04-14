@@ -92,7 +92,3 @@ ulimitcmd       -u ulimit
 #endif
 testcmd         test [
 killcmd         -u kill
-unamecmd        uname
-lscmd           ls
-catcmd          cat
-grepcmd         grep

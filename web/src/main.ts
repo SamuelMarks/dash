@@ -23,10 +23,11 @@ window.addEventListener('resize', () => fitAddon.fit());
 term.writeln('Welcome to \x1b[1;32mdash\x1b[0m compiled to WebAssembly!');
 term.writeln('Loading shell in Web Worker...');
 
-const worker = new Worker('/worker.js');
+const worker = new Worker('./worker.js');
 
 worker.onmessage = (e) => {
   const msg = e.data;
+  console.log("WORKER MSG:", msg.type, typeof msg.data, msg.data);
   switch (msg.type) {
     case 'LOADED':
       term.writeln('Shell loaded.\r\n');

@@ -168,6 +168,26 @@ static int evalcmd(int argc, char **argv, int flags)
 }
 
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+EMSCRIPTEN_KEEPALIVE
+int dash_eval_script(const char *script_text) {
+        struct jmploc jmploc;
+        struct jmploc *volatile savehandler = handler;
+        volatile int status = 0;
+
+        if (setjmp(jmploc.loc)) {
+                status = exitstatus;
+        } else {
+                handler = &jmploc;
+                status = evalstring((char *)script_text, EV_EXIT);
+        }
+        handler = savehandler;
+        return status;
+}
+#endif
+
 /*
  * Execute a command or commands contained in a string.
  */

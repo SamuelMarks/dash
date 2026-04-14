@@ -1010,13 +1010,12 @@ struct job *vforkexec(union node *n, char **argv, const char *path, int idx)
             }
             
             if (typeof processExternalCommand === 'function') {
-                return processExternalCommand(args);
+                var res = processExternalCommand(args);
+                if (res !== undefined && res !== null) return res;
             }
             
-            if (args[0] === 'uname') {
-                Module.print('Emscripten');
-                return 0;
-            } else if (args[0] === 'ls') {
+            var cmd = args[0].split('/').pop();
+            if (cmd === 'ls') {
                 try {
                     var items = FS.readdir(FS.cwd());
                     items = items.filter(function(i) { return i !== '.' && i !== '..'; });
@@ -1026,7 +1025,7 @@ struct job *vforkexec(union node *n, char **argv, const char *path, int idx)
                     Module.printErr('ls: ' + e.message);
                     return 1;
                 }
-            } else if (args[0] === 'cat') {
+            } else if (cmd === 'cat') {
                 if (args.length > 1) {
                     try {
                         var content = FS.readFile(args[1], { encoding: 'utf8' });
@@ -1038,9 +1037,35 @@ struct job *vforkexec(union node *n, char **argv, const char *path, int idx)
                     }
                 }
                 return 0;
-            } else if (args[0] === 'grep') {
+            } else if (cmd === 'grep') {
                 Module.printErr('grep: not implemented');
                 return 1;
+            } else if (cmd === 'curl') {
+                if (args.length < 2) {
+                    Module.printErr('curl: try \'curl --help\' or \'curl --manual\' for more information');
+                    return 2;
+                }
+                var url = args[1];
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    url = 'https://' + url;
+                }
+                return Asyncify.handleSleep(function(wakeUp) {
+                    fetch(url)
+                        .then(function(res) {
+                            if (!res.ok) {
+                                throw new Error('HTTP error ' + res.status);
+                            }
+                            return res.text();
+                        })
+                        .then(function(text) {
+                            Module.print(text);
+                            wakeUp(0);
+                        })
+                        .catch(function(err) {
+                            Module.printErr('curl: (6) Could not resolve host: ' + err.message + ' (possible CORS issue?)');
+                            wakeUp(6);
+                        });
+                });
             }
             
             Module.printErr(args[0] + ': command not found');
