@@ -2,56 +2,56 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
 
-    - name: Install dependencies (web)
-      run: |
-        cd web
-        npm ci
+      - name: Install dependencies (web)
+        run: |
+          cd web
+          npm ci
 
-    - name: Setup emsdk
-      uses: mymindstorm/setup-emsdk@v12
-      with:
-        version: latest
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v12
+        with:
+          version: latest
 
-    - name: Bootstrap autotools
-      run: ./autogen.sh
+      - name: Bootstrap autotools
+        run: ./autogen.sh
 
-    - name: Build dash to WebAssembly
-      run: ./build.sh
+      - name: Build dash to WebAssembly
+        run: ./build.sh
 
-    - name: Run headless Node.js tests
-      run: node web/tests/node-tests.js
+      - name: Run headless Node.js tests
+        run: node web/tests/node-tests.js
 
-    - name: Install Playwright browsers
-      run: |
-        cd web
-        npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: |
+          cd web
+          npx playwright install --with-deps chromium
 
-    - name: Run browser-based integration tests
-      run: |
-        cd web
-        npm run test
+      - name: Run browser-based integration tests
+        run: |
+          cd web
+          npm run test
 
-    - name: Archive WebAssembly Artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: wasm-artifacts
-        path: |
-          web/public/dash.wasm
-          web/public/dash.js
-          web/public/dash.wasm.map
+      - name: Archive WebAssembly Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: wasm-artifacts
+          path: |
+            web/public/dash.wasm
+            web/public/dash.js
+            web/public/dash.wasm.map

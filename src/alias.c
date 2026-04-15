@@ -137,12 +137,23 @@ lookupalias(const char *name, int check)
 int
 aliascmd(int argc, char **argv)
 {
-	char *n, *v;
-	int ret = 0;
-	struct alias *ap;
+        char *n, *v;
+        int ret = 0;
+        struct alias *ap;
 
-	if (argc == 1) {
-		int i;
+        if (argc > 1) {
+                if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0) {
+                        out1fmt("alias (dash-wasm) 0.0.1\n");
+                        return 0;
+                }
+                if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+                        out1fmt("Usage: alias [name[=value] ...]\n");
+                        out1fmt("This is a WebAssembly port of alias.\n");
+                        return 0;
+                }
+        }
+
+        if (argc == 1) {		int i;
 
 		for (i = 0; i < ATABSIZE; i++)
 			for (ap = atab[i]; ap; ap = ap->next) {

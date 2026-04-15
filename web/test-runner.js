@@ -1,23 +1,34 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
-const fs = require('fs');
+const { execSync } = require("child_process");
+const fs = require("fs");
 
-const dashPath = __dirname + '/public/dash.js';
+const dashPath = __dirname + "/public/dash.js";
 
 const tests = [
-  { name: 'echo', script: 'echo hello', expected: 'hello\n' },
-  { name: 'variables', script: 'a=123\necho $a', expected: '123\n' },
-  { name: 'loops', script: 'for i in 1 2 3; do echo $i; done', expected: '1\n2\n3\n' },
-  { name: 'math', script: 'echo $((2+3))', expected: '5\n' },
-  { name: 'pipe', script: 'echo "a\nb\nc" | grep b', expected: 'b\n' }
+  { name: "echo", script: "echo hello", expected: "hello\n" },
+  { name: "variables", script: "a=123\necho $a", expected: "123\n" },
+  {
+    name: "loops",
+    script: "for i in 1 2 3; do echo $i; done",
+    expected: "1\n2\n3\n",
+  },
+  { name: "math", script: "echo $((2+3))", expected: "5\n" },
+  {
+    name: "pipe",
+    script: 'echo "a\nb\nc" | { read a; read b; echo $b; }',
+    expected: "b\n",
+  },
 ];
 
 let failed = 0;
 
 for (const test of tests) {
   try {
-    const output = execSync(`node ${dashPath} -c '${test.script.replace(/'/g, "'\\''")}'`, { encoding: 'utf8' });
+    const output = execSync(
+      `node ${dashPath} -c '${test.script.replace(/'/g, "'\\''")}'`,
+      { encoding: "utf8" },
+    );
     if (output === test.expected) {
       console.log(`PASS: ${test.name}`);
     } else {

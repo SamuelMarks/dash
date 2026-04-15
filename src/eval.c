@@ -609,6 +609,42 @@ evalpipe(union node *n, int flags)
 				sh_error("Pipe call failed");
 			}
 		}
+
+#ifdef __EMSCRIPTEN__
+                int save0 = dup(0);
+                int save1 = dup(1);
+
+                if (prevfd > 0) {
+                        dup2(prevfd, 0);
+                        close(prevfd);
+                }
+                if (pip[1] > 1) {
+                        dup2(pip[1], 1);
+                }
+
+                INTON;
+                status = evaltree(lp->n, flags & ~EV_EXIT);
+                flushall();
+                INTOFF;
+
+                dup2(save0, 0);
+                dup2(save1, 1);
+                close(save0);
+                close(save1);
+
+                if (prevfd >= 0)
+                        close(prevfd);
+                prevfd = pip[0];
+                if (pip[1] >= 0)
+                        close(pip[1]);
+        }
+#ifndef __EMSCRIPTEN__
+        if (n->npipe.backgnd == 0) {
+                status = waitforjob(jp);
+                TRACE(("evalpipe:  job done exit status %d\n", status));
+        }
+#endif
+#else
 		if (forkshell(jp, lp->n, n->npipe.backgnd) == 0) {
 			INTON;
 			if (pip[1] >= 0) {
@@ -635,6 +671,8 @@ evalpipe(union node *n, int flags)
 		status = waitforjob(jp);
 		TRACE(("evalpipe:  job done exit status %d\n", status));
 	}
+
+#endif
 	INTON;
 
 	return status;

@@ -374,7 +374,30 @@ TRACE(("expecting DO got %s %s\n", tokname[got], got == TWORD ? wordtext : ""));
 		n1->nbinary.ch2 = list(0);
 		t = TDONE;
 		break;
-	}
+		}
+		case TFUNCTION:
+		checkkwd = CHKNL | CHKKWD | CHKALIAS;
+		if (readtoken() != TWORD)
+		        synexpect(TWORD);
+		if (quoteflag || !goodname(wordtext))
+		        synerror("Bad function name");
+
+		n1 = (union node *)stalloc(sizeof (struct ndefun));
+		n1->type = NDEFUN;
+		n1->ndefun.linno = savelinno;
+		n1->ndefun.text = wordtext;
+
+		checkkwd = CHKNL | CHKKWD | CHKALIAS;
+		if (readtoken() == TLP) {
+		        if (readtoken() != TRP)
+		                synexpect(TRP);
+		} else {
+			tokpushback++;
+		}
+
+		checkkwd = CHKNL | CHKKWD | CHKALIAS;
+		n1->ndefun.body = command();
+		goto redir;
 	case TFOR:
 		if (readtoken() != TWORD || quoteflag || ! goodname(wordtext))
 			synerror("Bad for loop variable");
