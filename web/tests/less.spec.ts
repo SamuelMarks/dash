@@ -12,7 +12,7 @@ test("less command acts as a pager", async ({ page }) => {
 
   // Set up a large test file
   await page.keyboard.type(
-    'i=1; while [ $i -le 50 ]; do echo "Line $i"; i=$((i+1)); done > /tmp/large.txt\r',
+    'i=1; while [ $i -le 100 ]; do echo "Line $i"; i=$((i+1)); done > /tmp/large.txt\r',
     { delay: 10 },
   );
   await page.waitForTimeout(2000);
@@ -35,13 +35,13 @@ test("less command acts as a pager", async ({ page }) => {
   expect(terminalText).toContain("Line 1");
   expect(terminalText).toContain("Line 20");
   // Should NOT show the last lines yet
-  expect(terminalText).not.toContain("Line 40");
+  expect(terminalText).not.toContain("Line 90");
 
   // The status line should be visible
   expect(terminalText).toContain("press q to quit");
 
   // Press space to scroll down
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 60; i++) {
     await page.keyboard.press("Space");
     await page.waitForTimeout(50);
   }
@@ -54,7 +54,7 @@ test("less command acts as a pager", async ({ page }) => {
   });
 
   // Now it should show later lines
-  expect(terminalText).toContain("Line 40");
+  expect(terminalText).toContain("Line 90");
 
   // Press 'q' to quit
   await page.keyboard.type("q");
@@ -70,4 +70,22 @@ test("less command acts as a pager", async ({ page }) => {
       .join("\n");
   });
   expect(terminalText).toContain("large.txt");
+
+  // Run more
+  await page.keyboard.type("more /tmp/large.txt\r", { delay: 10 });
+  await page.waitForTimeout(1000);
+
+  terminalText = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll(".xterm-rows > div"))
+      .map((row) => row.textContent)
+      .join("\n");
+  });
+
+  // Should show the first lines
+  expect(terminalText).toContain("Line 1");
+  expect(terminalText).toContain("press q to quit");
+
+  // Press 'q' to quit
+  await page.keyboard.type("q");
+  await page.waitForTimeout(500);
 });

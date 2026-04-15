@@ -1,16 +1,32 @@
+/**
+ * Main Web Worker for executing the WebAssembly Dash Shell environment.
+ * Responsible for proxying system commands to browser APIs (like clipboard, OPFS, IndexedDB),
+ * handling TTY terminal flows via `stdinBuffer`, and simulating synchronous processes
+ * via `Asyncify` and `async/await` integrations (e.g. isomorphic-git).
+ */
+importScripts("./buffer-polyfill.js");
+importScripts("./isomorphic-git.min.js");
+
 let stdinBuffer = [];
 let resolveStdin = null;
 globalThis.stdinBuffer = stdinBuffer;
 
+/**
+ * Invoked by dash's built-in hooks when an external binary cannot be found.
+ * Intercepts common POSIX commands and simulates them entirely in JS.
+ * @param {string[]} args - The command-line arguments (e.g. ['/bin/git', 'status'])
+ * @returns {number|null} the exit status code (0 for success) or null to fall back to C implementation
+ */
 globalThis.processExternalCommand = function (args) {
   const cmd = args[0].split("/").pop();
 
-  if (args.includes("--version")) {
+  if (args.includes("--version") && cmd !== "git") {
     self.Module.print(`${cmd} (dash-wasm) 0.0.1`);
     return 0;
   }
 
   const customHelpCommands = [
+    "git",
     "grep",
     "tar",
     "env",
@@ -30,12 +46,338 @@ globalThis.processExternalCommand = function (args) {
     "more",
     "top",
     "htop",
+    "touch",
   ];
 
   if (args.includes("--help") && !customHelpCommands.includes(cmd)) {
     self.Module.print(`Usage: ${cmd} [OPTION]...`);
     self.Module.print(`This is a WebAssembly port of ${cmd}.`);
     return 0;
+  }
+
+  if (cmd === "git") {
+    return self.Module.Asyncify.handleSleep(function (wakeUp) {
+      (async () => {
+        try {
+          function wrapEnoent(fn) {
+            return async (...args) => {
+              try {
+                return await fn(...args);
+              } catch (err) {
+                if (err && err.name === "ErrnoError") {
+                  const e = new Error(err.message || "ErrnoError");
+                  e.code = "ENOENT";
+                  throw e;
+                }
+                throw err;
+              }
+            };
+          }
+
+          const nodefs = {
+            promises: {
+              readFile: wrapEnoent(async (path, opts) => {
+                let encoding = "binary";
+                if (typeof opts === "string") encoding = opts;
+                else if (opts && opts.encoding) encoding = opts.encoding;
+
+                const data = self.Module.FS.readFile(path, { encoding });
+                if (encoding === "binary" || !encoding) {
+                  return Buffer.from(data);
+                }
+                return data;
+              }),
+              writeFile: wrapEnoent(async (path, data, opts) => {
+                let encoding = "binary";
+                if (typeof opts === "string") encoding = opts;
+                else if (opts && opts.encoding) encoding = opts.encoding;
+
+                if (typeof data === "string" || encoding === "utf8") {
+                  self.Module.FS.writeFile(path, data.toString());
+                } else {
+                  self.Module.FS.writeFile(path, new Uint8Array(data));
+                }
+              }),
+              unlink: wrapEnoent(async (path) => self.Module.FS.unlink(path)),
+              readdir: wrapEnoent(async (path) =>
+                self.Module.FS.readdir(path).filter(
+                  (x) => x !== "." && x !== "..",
+                ),
+              ),
+              mkdir: wrapEnoent(async (path) => self.Module.FS.mkdir(path)),
+              rmdir: wrapEnoent(async (path) => self.Module.FS.rmdir(path)),
+              stat: wrapEnoent(async (path) => {
+                const s = self.Module.FS.stat(path);
+                return {
+                  ...s,
+                  type: self.Module.FS.isFile(s.mode)
+                    ? "file"
+                    : self.Module.FS.isDir(s.mode)
+                      ? "dir"
+                      : self.Module.FS.isLink(s.mode)
+                        ? "symlink"
+                        : "unknown",
+                  isFile: () => self.Module.FS.isFile(s.mode),
+                  isDirectory: () => self.Module.FS.isDir(s.mode),
+                  isSymbolicLink: () => self.Module.FS.isLink(s.mode),
+                };
+              }),
+              lstat: wrapEnoent(async (path) => {
+                const s = self.Module.FS.lstat(path);
+                return {
+                  ...s,
+                  type: self.Module.FS.isFile(s.mode)
+                    ? "file"
+                    : self.Module.FS.isDir(s.mode)
+                      ? "dir"
+                      : self.Module.FS.isLink(s.mode)
+                        ? "symlink"
+                        : "unknown",
+                  isFile: () => self.Module.FS.isFile(s.mode),
+                  isDirectory: () => self.Module.FS.isDir(s.mode),
+                  isSymbolicLink: () => self.Module.FS.isLink(s.mode),
+                };
+              }),
+              readlink: wrapEnoent(async (path) =>
+                self.Module.FS.readlink(path),
+              ),
+              symlink: wrapEnoent(async (target, path) =>
+                self.Module.FS.symlink(target, path),
+              ),
+            },
+          };
+
+          const subcommand = args[1];
+          const dir = self.Module.FS.cwd();
+
+          if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+            self.Module.print(
+              "usage: git <command> [<args>]\n\nThese are common Git commands used in various situations:\n\nstart a working area\n   init       Create an empty Git repository or reinitialize an existing one\n\nwork on the current change\n   add        Add file contents to the index\n   status     Show the working tree status\n   commit     Record changes to the repository\n   log        Show commit logs\n   branch     List, create, or delete branches\n   checkout   Switch branches or restore working tree files\n   switch     Switch branches\n\nOptions:\n   --version  Show version",
+            );
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "--version" || subcommand === "-v") {
+            const versionStr =
+              git.version && typeof git.version === "function"
+                ? git.version()
+                : "1.37.5";
+            self.Module.print(
+              `git version ${versionStr} (isomorphic-git, dash-wasm)`,
+            );
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "init") {
+            await git.init({ fs: nodefs, dir });
+            self.Module.print(
+              "Initialized empty Git repository in " + dir + "/.git/",
+            );
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "status") {
+            const statusMatrix = await git.statusMatrix({ fs: nodefs, dir });
+            for (const row of statusMatrix) {
+              const [filepath, head, workdir, stage] = row;
+              // Format according to git status somewhat, just enough to be useful
+              let statusChar = " ";
+              if (head === 1 && workdir === 1 && stage === 1) statusChar = " ";
+              else if (head === 0 && workdir === 2 && stage === 0)
+                statusChar = "??";
+              else if (head === 1 && workdir === 2 && stage === 1)
+                statusChar = " M";
+              else if (head === 1 && workdir === 1 && stage === 2)
+                statusChar = "M ";
+              else if (head === 1 && workdir === 2 && stage === 2)
+                statusChar = "MM";
+              else if (head === 0 && workdir === 2 && stage === 2)
+                statusChar = "A ";
+              else if (head === 1 && workdir === 0 && stage === 1)
+                statusChar = " D";
+              else if (head === 1 && workdir === 0 && stage === 0)
+                statusChar = "D ";
+              else statusChar = "* "; // Catch all
+
+              if (statusChar !== " ") {
+                self.Module.print(`${statusChar} ${filepath}`);
+              }
+            }
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "add") {
+            const filepaths = args.slice(2);
+            for (const filepath of filepaths) {
+              if (filepath === ".") {
+                const statusMatrix = await git.statusMatrix({
+                  fs: nodefs,
+                  dir,
+                });
+                for (const row of statusMatrix) {
+                  const [fp, head, workdir, stage] = row;
+                  if (workdir !== head || stage !== head) {
+                    await git.add({ fs: nodefs, dir, filepath: fp });
+                  }
+                }
+              } else {
+                await git.add({ fs: nodefs, dir, filepath });
+              }
+            }
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "commit") {
+            let message = "Commit";
+            let mIndex = args.indexOf("-m");
+            if (mIndex !== -1 && mIndex < args.length - 1) {
+              message = args[mIndex + 1];
+            } else {
+              self.Module.print("Please provide a commit message with -m");
+              wakeUp(1);
+              return;
+            }
+            let sha = await git.commit({
+              fs: nodefs,
+              dir,
+              message,
+              author: { name: "web_user", email: "web_user@browser" },
+            });
+            self.Module.print(`[main ${sha.substring(0, 7)}] ${message}`);
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "branch") {
+            const branchName = args[2];
+            if (branchName) {
+              await git.branch({ fs: nodefs, dir, ref: branchName });
+              wakeUp(0);
+              return;
+            } else {
+              const branches = await git.listBranches({ fs: nodefs, dir });
+              const current = await git.currentBranch({ fs: nodefs, dir });
+              for (const b of branches) {
+                if (b === current) self.Module.print(`* ${b}`);
+                else self.Module.print(`  ${b}`);
+              }
+              wakeUp(0);
+              return;
+            }
+          }
+
+          if (subcommand === "checkout" || subcommand === "switch") {
+            let ref = args[2];
+            let isCreate = false;
+
+            if (subcommand === "switch" && args.includes("-c")) {
+              isCreate = true;
+              ref = args[args.indexOf("-c") + 1];
+            } else if (subcommand === "checkout" && args.includes("-b")) {
+              isCreate = true;
+              ref = args[args.indexOf("-b") + 1];
+            } else if (subcommand === "switch") {
+              ref = args[2];
+            }
+
+            if (!ref) {
+              self.Module.print("fatal: missing branch or commit argument");
+              wakeUp(1);
+              return;
+            }
+
+            if (isCreate) {
+              try {
+                await git.branch({ fs: nodefs, dir, ref, checkout: true }); // checkout option not supported directly by branch, see docs
+                // Isomorphic git branch doesn't checkout. We need to do it.
+                await git.branch({ fs: nodefs, dir, ref });
+                try {
+                  await git.checkout({ fs: nodefs, dir, ref });
+                } catch (ce) {
+                  // Ignore origin tracking error on new branch checkout
+                  if (!ce.message || !ce.message.includes("origin/")) throw ce;
+                }
+                self.Module.print(`Switched to a new branch '${ref}'`);
+              } catch (e) {
+                self.Module.printErr(
+                  "git error: " + (e.message || e.toString()),
+                );
+              }
+            } else {
+              try {
+                // Actually isomorphic git checkout `ref` checks out `ref`.
+                await git.checkout({ fs: nodefs, dir, ref });
+                self.Module.print(`Switched to branch '${ref}'`);
+              } catch (err) {
+                if (err && err.message && err.message.includes("origin/")) {
+                  try {
+                    // Try with track: false as last resort
+                    await git.checkout({ fs: nodefs, dir, ref, track: false });
+                    self.Module.print(`Switched to branch '${ref}'`);
+                  } catch (err2) {
+                    // Ignore origin tracking error if checking out a local branch
+                    if (
+                      err2 &&
+                      err2.message &&
+                      err2.message.includes("origin/")
+                    ) {
+                      self.Module.print(`Switched to branch '${ref}'`);
+                    } else {
+                      self.Module.printErr(
+                        "git error: " + (err2.message || err2.toString()),
+                      );
+                    }
+                  }
+                } else {
+                  self.Module.printErr(
+                    "git error: " + (err.message || err.toString()),
+                  );
+                }
+              }
+            }
+            wakeUp(0);
+            return;
+          }
+
+          if (subcommand === "log") {
+            try {
+              let commits = await git.log({ fs: nodefs, dir });
+              for (let c of commits) {
+                self.Module.print(`commit ${c.oid}`);
+                self.Module.print(
+                  `Author: ${c.commit.author.name} <${c.commit.author.email}>`,
+                );
+                self.Module.print(`\n    ${c.commit.message}\n`);
+              }
+            } catch (err) {
+              if (err.code === "NotFoundError") {
+                self.Module.print(
+                  "fatal: your current branch 'main' does not have any commits yet",
+                );
+              } else {
+                throw err;
+              }
+            }
+            wakeUp(0);
+            return;
+          }
+
+          self.Module.print(
+            `git: '${subcommand}' is not a git command. See 'git --help'.`,
+          );
+          wakeUp(1);
+        } catch (err) {
+          self.Module.printErr("git error: " + (err.message || err.toString()));
+          console.error(err);
+          wakeUp(1);
+        }
+      })();
+    });
   }
 
   if (cmd === "cowsay") {
@@ -1993,6 +2335,67 @@ globalThis.processExternalCommand = function (args) {
     return ret;
   }
 
+  if (cmd === "touch") {
+    let files = [];
+    let noCreate = false;
+    let showHelp = false;
+    for (let j = 1; j < args.length; j++) {
+      if (args[j] === "-c" || args[j] === "--no-create") {
+        noCreate = true;
+      } else if (args[j] === "--help") {
+        showHelp = true;
+      } else if (!args[j].startsWith("-")) {
+        files.push(args[j]);
+      } else {
+        self.Module.printErr(`touch: invalid option -- '${args[j]}'`);
+        return 1;
+      }
+    }
+
+    if (showHelp) {
+      self.Module.print("Usage: touch [OPTION]... FILE...");
+      self.Module.print(
+        "Update the access and modification times of each FILE to the current time.",
+      );
+      self.Module.print(
+        "A FILE argument that does not exist is created empty, unless -c or --no-create is supplied.",
+      );
+      self.Module.print("  -c, --no-create    do not create any files");
+      self.Module.print("      --help         display this help and exit");
+      self.Module.print(
+        "      --version      output version information and exit",
+      );
+      return 0;
+    }
+
+    if (files.length === 0) {
+      self.Module.printErr("touch: missing file operand");
+      self.Module.printErr("Try 'touch --help' for more information.");
+      return 1;
+    }
+
+    let ret = 0;
+    let now = Date.now();
+    for (let file of files) {
+      try {
+        let stat = self.Module.FS.stat(file);
+        self.Module.FS.utime(file, now, now);
+      } catch (e) {
+        if (!noCreate) {
+          try {
+            self.Module.FS.writeFile(file, "");
+          } catch (err) {
+            self.Module.printErr(
+              `touch: cannot touch '${file}': ${err.message}`,
+            );
+            ret = 1;
+          }
+        }
+      }
+    }
+    return ret;
+  }
+
   if (cmd === "stat") {
     let opts = { L: false, c: null };
     let files = [];
@@ -3677,10 +4080,22 @@ globalThis.processExternalCommand = function (args) {
 
       function render() {
         writeRaw("\x1b[2J\x1b[H"); // Clear
-        writeRaw("\x1b[7mtotal tasks: 3, running: 1, sleeping: 2\x1b[0m\r\n");
-        writeRaw(
-          "\x1b[7m  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\x1b[0m\r\n",
-        );
+        let header1 = `total tasks: 3, running: 1, sleeping: 2`;
+        if (header1.length < globalThis.termCols) {
+          header1 += " ".repeat(globalThis.termCols - header1.length);
+        } else {
+          header1 = header1.substring(0, globalThis.termCols);
+        }
+        writeRaw(`\x1b[7m${header1}\x1b[0m\r\n`);
+
+        let header2 = `  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND`;
+        if (header2.length < globalThis.termCols) {
+          header2 += " ".repeat(globalThis.termCols - header2.length);
+        } else {
+          header2 = header2.substring(0, globalThis.termCols);
+        }
+        writeRaw(`\x1b[7m${header2}\x1b[0m\r\n`);
+
         writeRaw(
           `    1 root      20   0    2.1m   1.2m   0.8m S   0.0   0.1   0:00.01 init\r\n`,
         );
@@ -3703,7 +4118,8 @@ globalThis.processExternalCommand = function (args) {
       let ticks = 0;
       let inputLoop = setInterval(() => {
         ticks++;
-        if (ticks % 60 === 0) {
+        if (ticks % 60 === 0 || globalThis.forceRender) {
+          globalThis.forceRender = false;
           render();
         }
         while (globalThis.stdinBuffer && globalThis.stdinBuffer.length > 0) {
@@ -3732,7 +4148,6 @@ globalThis.processExternalCommand = function (args) {
     }
 
     return self.Module.Asyncify.handleSleep(function (wakeUp) {
-      const termRows = 24;
       let lines = text.split("\n");
       if (lines.length === 0) lines = [""];
       let cursorY = 0;
@@ -3749,11 +4164,15 @@ globalThis.processExternalCommand = function (args) {
         writeRaw("\x1b[?25l"); // Hide cursor
         writeRaw("\x1b[2J\x1b[H"); // Clear
         // header
-        writeRaw(
-          `\x1b[7m  GNU nano-ish                        ${filename} \x1b[0m\r\n`,
-        );
+        let headerText = `  GNU nano-ish                        ${filename} `;
+        if (headerText.length < globalThis.termCols) {
+          headerText += " ".repeat(globalThis.termCols - headerText.length);
+        } else {
+          headerText = headerText.substring(0, globalThis.termCols);
+        }
+        writeRaw(`\x1b[7m${headerText}\x1b[0m\r\n`);
 
-        let displayLines = termRows - 3;
+        let displayLines = globalThis.termRows - 3;
         if (cursorY < scrollY) scrollY = cursorY;
         if (cursorY >= scrollY + displayLines)
           scrollY = cursorY - displayLines + 1;
@@ -3767,7 +4186,13 @@ globalThis.processExternalCommand = function (args) {
           }
         }
         // footer
-        writeRaw(`\x1b[7m^S Save    ^X Exit\x1b[0m`);
+        let footerText = `^S Save    ^X Exit`;
+        if (footerText.length < globalThis.termCols) {
+          footerText += " ".repeat(globalThis.termCols - footerText.length);
+        } else {
+          footerText = footerText.substring(0, globalThis.termCols);
+        }
+        writeRaw(`\x1b[7m${footerText}\x1b[0m`);
 
         // Position cursor
         writeRaw(`\x1b[${cursorY - scrollY + 2};${cursorX + 1}H`);
@@ -3780,6 +4205,10 @@ globalThis.processExternalCommand = function (args) {
 
       let escapeBuffer = "";
       let inputLoop = setInterval(() => {
+        if (globalThis.forceRender) {
+          globalThis.forceRender = false;
+          render();
+        }
         while (globalThis.stdinBuffer && globalThis.stdinBuffer.length > 0) {
           let code = globalThis.stdinBuffer.shift();
           let ch = String.fromCharCode(code);
@@ -3890,7 +4319,6 @@ globalThis.processExternalCommand = function (args) {
     }
 
     return self.Module.Asyncify.handleSleep(function (wakeUp) {
-      const termRows = 24;
       const lines = text.split("\n");
       let offset = 0;
 
@@ -3902,13 +4330,17 @@ globalThis.processExternalCommand = function (args) {
 
       function render() {
         writeRaw("\x1b[2J\x1b[H"); // Clear screen and move to top
-        let out = lines.slice(offset, offset + termRows - 1);
+        let out = lines.slice(offset, offset + globalThis.termRows - 1);
         for (let i = 0; i < out.length; i++) {
           writeRaw(out[i] + "\r\n");
         }
-        writeRaw(
-          "\x1b[7m:(press q to quit, space/j for next, k for prev)\x1b[0m",
-        );
+        let footerText = `:(press q to quit, space/j for next, k for prev)`;
+        if (footerText.length < globalThis.termCols) {
+          footerText += " ".repeat(globalThis.termCols - footerText.length);
+        } else {
+          footerText = footerText.substring(0, globalThis.termCols);
+        }
+        writeRaw(`\x1b[7m${footerText}\x1b[0m`);
       }
 
       self.postMessage({ type: "SET_RAW_MODE", data: true });
@@ -3916,6 +4348,10 @@ globalThis.processExternalCommand = function (args) {
       render();
 
       let inputLoop = setInterval(() => {
+        if (globalThis.forceRender) {
+          globalThis.forceRender = false;
+          render();
+        }
         while (globalThis.stdinBuffer && globalThis.stdinBuffer.length > 0) {
           let ch = String.fromCharCode(globalThis.stdinBuffer.shift());
           if (ch === "q" || ch === "Q") {
@@ -3931,7 +4367,7 @@ globalThis.processExternalCommand = function (args) {
             ch === "\r" ||
             ch === "\n"
           ) {
-            if (offset + termRows - 1 < lines.length) {
+            if (offset + globalThis.termRows - 1 < lines.length) {
               offset++;
               render();
             }
@@ -4471,16 +4907,32 @@ globalThis.processExternalCommand = function (args) {
   return null; // Fallback to built-ins in jobs.c
 };
 
+globalThis.termCols = 80;
+globalThis.termRows = 24;
+
 self.onmessage = (e) => {
   const msg = e.data;
-  if (msg.type === "INIT_LOCALSTORAGE") {
+  if (msg.type === "RESIZE") {
+    globalThis.termCols = msg.cols;
+    globalThis.termRows = msg.rows;
+    globalThis.forceRender = true;
+  } else if (msg.type === "INIT_LOCALSTORAGE") {
     try {
       self.Module.FS.mkdir("/sys");
     } catch (e) {}
     try {
       self.Module.FS.mkdir("/sys/fs");
     } catch (e) {}
-    self.Module.FS.mkdir("/sys/fs/localstorage");
+    try {
+      self.Module.FS.mkdir("/sys/fs/localstorage");
+    } catch (e) {}
+    try {
+      self.Module.FS.mkdir("/home");
+    } catch (e) {}
+    try {
+      self.Module.FS.mkdir("/home/opfs");
+    } catch (e) {}
+
     // Create a readme file to provide help text
     self.Module.FS.writeFile(
       "/sys/fs/localstorage/README.txt",
@@ -4489,6 +4941,137 @@ self.onmessage = (e) => {
     for (const [key, value] of Object.entries(msg.data)) {
       self.Module.FS.writeFile("/sys/fs/localstorage/" + key, value);
     }
+
+    /**
+     * OPFS (Origin Private File System) Bridge:
+     * This section transparently mounts the browser's high-performance OPFS
+     * sandbox to the /home/opfs mount point in our MemFS.
+     * It handles background dirty-file syncing and tracks fs mutations asynchronously.
+     */
+    let opfsDirtyFiles = new Set();
+    let opfsDeletedPaths = new Set();
+    let opfsDirtyDirs = new Set();
+    let opfsRoot = null;
+
+    /**
+     * Recursively reads OPFS storage into our emscripten MemFS.
+     * Executed once on boot.
+     */
+    async function loadOpfsToMemfs(handle, memfsPath) {
+      for await (const [name, entry] of handle.entries()) {
+        const fullPath = memfsPath + "/" + name;
+        if (entry.kind === "file") {
+          const file = await entry.getFile();
+          const buffer = await file.arrayBuffer();
+          self.Module.FS.writeFile(fullPath, new Uint8Array(buffer));
+        } else if (entry.kind === "directory") {
+          try {
+            self.Module.FS.mkdir(fullPath);
+          } catch (e) {}
+          await loadOpfsToMemfs(entry, fullPath);
+        }
+      }
+    }
+
+    /**
+     * Reconciles Emscripten MEMFS mutations (tracked via FS.close/unlink overrides)
+     * back to the OPFS backend.
+     * Uses optimized `createSyncAccessHandle` for synchronous, unbuffered I/O performance.
+     */
+    async function syncMemfsToOpfs() {
+      if (
+        opfsDeletedPaths.size === 0 &&
+        opfsDirtyDirs.size === 0 &&
+        opfsDirtyFiles.size === 0
+      )
+        return;
+      if (!opfsRoot) opfsRoot = await navigator.storage.getDirectory();
+
+      const deletions = Array.from(opfsDeletedPaths);
+      opfsDeletedPaths.clear();
+      for (const path of deletions) {
+        const rel = path.slice("/home/opfs/".length);
+        if (rel) {
+          let parts = rel.split("/");
+          let name = parts.pop();
+          let current = opfsRoot;
+          let ok = true;
+          for (let p of parts) {
+            try {
+              current = await current.getDirectoryHandle(p);
+            } catch (e) {
+              ok = false;
+              break;
+            }
+          }
+          if (ok) {
+            try {
+              await current.removeEntry(name, { recursive: true });
+            } catch (e) {}
+          }
+        }
+      }
+
+      const dirs = Array.from(opfsDirtyDirs);
+      opfsDirtyDirs.clear();
+      for (const path of dirs) {
+        const rel = path.slice("/home/opfs/".length);
+        if (rel) {
+          let parts = rel.split("/");
+          let current = opfsRoot;
+          for (let p of parts) {
+            try {
+              current = await current.getDirectoryHandle(p, { create: true });
+            } catch (e) {}
+          }
+        }
+      }
+
+      const files = Array.from(opfsDirtyFiles);
+      opfsDirtyFiles.clear();
+      for (const path of files) {
+        try {
+          const rel = path.slice("/home/opfs/".length);
+          if (rel) {
+            let parts = rel.split("/");
+            let name = parts.pop();
+            let current = opfsRoot;
+            let ok = true;
+            for (let p of parts) {
+              try {
+                current = await current.getDirectoryHandle(p, { create: true });
+              } catch (e) {
+                ok = false;
+                break;
+              }
+            }
+            if (ok) {
+              const handle = await current.getFileHandle(name, {
+                create: true,
+              });
+              const writable = await handle.createSyncAccessHandle();
+              try {
+                const data = self.Module.FS.readFile(path);
+                writable.truncate(0);
+                writable.write(data);
+                writable.flush();
+              } finally {
+                writable.close();
+              }
+            }
+          }
+        } catch (e) {
+          console.error("OPFS sync failed for", path, e);
+        }
+      }
+    }
+
+    navigator.storage.getDirectory().then(async (root) => {
+      opfsRoot = root;
+      await loadOpfsToMemfs(root, "/home/opfs");
+      postMessage({ type: "OPFS_LOADED" });
+      setInterval(syncMemfsToOpfs, 2000); // Sync every 2 seconds
+    });
 
     const originalClose = self.Module.FS.close;
     self.Module.FS.close = function (stream) {
@@ -4507,6 +5090,8 @@ self.onmessage = (e) => {
             });
           } catch (e) {}
         }
+      } else if (stream.path && stream.path.startsWith("/home/opfs/")) {
+        opfsDirtyFiles.add(stream.path);
       }
     };
 
@@ -4518,6 +5103,43 @@ self.onmessage = (e) => {
         if (key !== "README.txt") {
           postMessage({ type: "DELETE_LOCALSTORAGE", key: key });
         }
+      } else if (path.startsWith("/home/opfs/")) {
+        opfsDeletedPaths.add(path);
+        opfsDirtyFiles.delete(path);
+      }
+    };
+
+    const originalMkdir = self.Module.FS.mkdir;
+    self.Module.FS.mkdir = function (path, mode) {
+      originalMkdir.apply(this, arguments);
+      if (path.startsWith("/home/opfs/")) {
+        opfsDirtyDirs.add(path);
+      }
+    };
+
+    const originalRmdir = self.Module.FS.rmdir;
+    self.Module.FS.rmdir = function (path) {
+      originalRmdir.apply(this, arguments);
+      if (path.startsWith("/home/opfs/")) {
+        opfsDeletedPaths.add(path);
+        opfsDirtyDirs.delete(path);
+      }
+    };
+
+    const originalRename = self.Module.FS.rename;
+    self.Module.FS.rename = function (oldPath, newPath) {
+      originalRename.apply(this, arguments);
+      if (oldPath.startsWith("/home/opfs/")) {
+        opfsDeletedPaths.add(oldPath);
+      }
+      if (newPath.startsWith("/home/opfs/")) {
+        try {
+          if (self.Module.FS.isDir(self.Module.FS.stat(newPath).mode)) {
+            opfsDirtyDirs.add(newPath);
+          } else {
+            opfsDirtyFiles.add(newPath);
+          }
+        } catch (e) {}
       }
     };
   } else if (msg.type === "INPUT") {
@@ -4564,6 +5186,8 @@ self.Module = {
       } catch (e) {}
       FS.writeFile("/bin/htop", "");
       FS.chmod("/bin/htop", 0o777);
+      FS.writeFile("/bin/git", "");
+      FS.chmod("/bin/git", 0o777);
       FS.writeFile("/bin/top", "");
       FS.chmod("/bin/top", 0o777);
       FS.writeFile("/bin/more", "");
@@ -4576,6 +5200,10 @@ self.Module = {
       FS.chmod("/bin/vi", 0o777);
       FS.writeFile("/bin/nano", "");
       FS.chmod("/bin/nano", 0o777);
+      FS.writeFile("/bin/pico", "");
+      FS.chmod("/bin/pico", 0o777);
+      FS.writeFile("/bin/touch", "");
+      FS.chmod("/bin/touch", 0o777);
       FS.writeFile("/bin/whoami", "");
       FS.chmod("/bin/whoami", 0o777);
       FS.writeFile("/bin/uname", "");

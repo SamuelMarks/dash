@@ -53,4 +53,52 @@ test("nano command acts as an editor", async ({ page }) => {
       .join("\n");
   });
   expect(terminalText).toContain("Hello from Playwright!");
+
+  // Test vi alias
+  await page.keyboard.type("vi /tmp/vi.txt\r", { delay: 10 });
+  await page.waitForTimeout(500);
+
+  terminalText = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll(".xterm-rows > div"))
+      .map((row) => row.textContent)
+      .join("\n");
+  });
+  expect(terminalText).toContain("GNU nano-ish");
+  expect(terminalText).toContain("/tmp/vi.txt");
+
+  // Exit (Ctrl+X)
+  await page.keyboard.press("Control+x");
+  await page.waitForTimeout(500);
+
+  // Test vim alias
+  await page.keyboard.type("vim /tmp/vim.txt\r", { delay: 10 });
+  await page.waitForTimeout(500);
+
+  terminalText = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll(".xterm-rows > div"))
+      .map((row) => row.textContent)
+      .join("\n");
+  });
+  expect(terminalText).toContain("GNU nano-ish");
+  expect(terminalText).toContain("/tmp/vim.txt");
+
+  // Exit (Ctrl+X)
+  await page.keyboard.press("Control+x");
+  await page.waitForTimeout(500);
+
+  // Test pico alias
+  await page.keyboard.type("pico /tmp/pico.txt\r", { delay: 10 });
+  await page.waitForTimeout(500);
+
+  terminalText = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll(".xterm-rows > div"))
+      .map((row) => row.textContent)
+      .join("\n");
+  });
+  expect(terminalText).toContain("GNU nano-ish");
+  expect(terminalText).toContain("/tmp/pico.txt");
+
+  // Exit (Ctrl+X)
+  await page.keyboard.press("Control+x");
+  await page.waitForTimeout(500);
 });
